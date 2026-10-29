@@ -20,6 +20,9 @@ const Ink=(()=>{
   if(!targets.length)return;
   const bar=document.createElement('div');bar.className='ink-tools';bar.setAttribute('aria-label','문제 필기 도구');bar.innerHTML=`<div class="ink-buttons"><button type="button" data-ink="toggle" aria-pressed="true">✎ 필기 켜짐</button><label>색상 <input type="color" value="${color}" aria-label="필기 색상"></label><label>굵기 <select aria-label="필기 굵기"><option value="2">가는 펜</option><option value="3">보통 펜</option><option value="5">굵은 펜</option></select></label><button type="button" data-ink="eraser" aria-pressed="false">지우개</button><button type="button" data-ink="undo" disabled>되돌리기</button><button type="button" data-ink="redo" disabled>다시 실행</button><button type="button" data-ink="clear">이 문제 필기 지우기</button></div><p>문제·지문에 S펜으로 필기 · S펜 버튼을 누른 채 문지르면 지우기 · 손가락은 스크롤<br>필기는 이 기기에 자동 저장됩니다. 지우개는 닿은 획을 지웁니다. 정답은 아래에서 터치하세요.</p>`;
   const first=app.querySelector('.common')||app.querySelector('.source-hint');first.before(bar);
+  const diagnostic=document.createElement('details');diagnostic.className='ink-diagnostic';const summary=document.createElement('summary');summary.textContent='S펜이 안 될 때 · 입력 확인';const output=document.createElement('pre');output.textContent='버전 20261029-3\n이 창을 연 채 문제 위에 S펜을 대고, 옆 버튼을 눌렀다 놓아 보세요.\n표시되는 내용을 복사해 알려주시면 원인을 확인할 수 있습니다.';diagnostic.append(summary);diagnostic.append(output);bar.append(diagnostic);
+  const events=[];let lastReport=0;
+  function report(e){if(!diagnostic.open)return;const now=Date.now();if(e.type==='pointermove'&&now-lastReport<150)return;lastReport=now;events.push(`${e.type||'pointer'} ${e.pointerType||'-'} button=${e.button??'-'} buttons=${e.buttons??'-'} pressure=${e.pressure??'-'} contact=${contact(e)?1:0} eraser=${penEraser(e)?1:0}`);if(events.length>8)events.shift();output.textContent='버전 20261029-3 · 브라우저 입력 확인\n'+events.join('\n');}
   bar.querySelector('select').value=String(width);bar.querySelector('select').onchange=e=>width=Number(e.target.value);bar.querySelector('input').oninput=e=>{color=e.target.value;eraser=false;controls();};
   bar.querySelector('[data-ink="toggle"]').onclick=()=>{enabled=!enabled;controls();for(const s of surfaces)draw(s);};
   bar.querySelector('[data-ink="eraser"]').onclick=()=>{eraser=!eraser;enabled=true;controls();};
@@ -33,11 +36,12 @@ const Ink=(()=>{
    read(s.key).then(strokes=>{if(!alive)return;s.strokes=strokes;s.loaded=true;draw(s);}).catch(()=>{notify('필기를 불러오지 못했습니다. 브라우저 저장소를 확인해 주세요.');});
    const point=e=>{const r=canvas.getBoundingClientRect();return [Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))];};
    // Pen hover/over occurs before contact; disable native gestures only for the pen.
-   canvas.onpointerover=e=>{if(e.pointerType==='pen'||e.pointerType==='mouse')canvas.style.touchAction='none';else if(s.pointer===null)canvas.style.touchAction='pan-y pinch-zoom';};
+   canvas.onpointerover=e=>{report(e);if(e.pointerType==='pen'||e.pointerType==='mouse')canvas.style.touchAction='none';else if(s.pointer===null)canvas.style.touchAction='pan-y pinch-zoom';};
    canvas.onpointerleave=()=>{if(s.pointer===null)canvas.style.touchAction='pan-y pinch-zoom';};
-   canvas.oncontextmenu=e=>e.preventDefault();
-   canvas.onpointerdown=e=>{if(!enabled||!s.loaded||e.pointerType==='touch'||s.pointer!==null||!contact(e)||(e.pointerType!=='pen'&&e.button!==0))return;e.preventDefault();active=s;s.pointer=e.pointerId;canvas.setPointerCapture(e.pointerId);snapshot(s);s.erasing=eraser||penEraser(e);if(s.erasing)eraseAt(s,point(e));else s.pending={color,width:width/800,points:[point(e)]};draw(s);controls();};
+   canvas.oncontextmenu=e=>{report(e);e.preventDefault();};
+   canvas.onpointerdown=e=>{report(e);if(!enabled||!s.loaded||e.pointerType==='touch'||s.pointer!==null||!contact(e)||(e.pointerType!=='pen'&&e.button!==0))return;e.preventDefault();active=s;s.pointer=e.pointerId;canvas.setPointerCapture(e.pointerId);snapshot(s);s.erasing=eraser||penEraser(e);if(s.erasing)eraseAt(s,point(e));else s.pending={color,width:width/800,points:[point(e)]};draw(s);controls();};
    canvas.onpointermove=e=>{
+    report(e);
     // A barrel button can start a pointer while hovering. Start ink only on tip contact.
     if(s.pointer===null&&e.pointerType==='pen'&&contact(e))canvas.onpointerdown(e);
     if(e.pointerId!==s.pointer)return;if(!contact(e)){end(e);return;}e.preventDefault();
@@ -45,7 +49,7 @@ const Ink=(()=>{
     if(nextErase!==s.erasing){if(s.pending)s.strokes.push(s.pending);s.pending=nextErase?null:{color,width:width/800,points:[point(e)]};s.erasing=nextErase;}
     const events=e.getCoalescedEvents?.()||[e];for(const ev of events){const p=point(ev);if(s.erasing)eraseAt(s,p);else if(s.pending&&s.pending.points.length<12000)s.pending.points.push(p);}draw(s);
    };
-   function end(e){if(e.pointerId!==s.pointer)return;if(s.pending)s.strokes.push(s.pending);s.pending=null;s.pointer=null;if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);changed(s);}
+   function end(e){report(e);if(e.pointerId!==s.pointer)return;if(s.pending)s.strokes.push(s.pending);s.pending=null;s.pointer=null;if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);changed(s);}
    canvas.onpointerup=end;canvas.onpointercancel=end;canvas.onlostpointercapture=end;
   }
   dispose=()=>{alive=false;observer.disconnect();for(const s of surfaces){if(s.pending){s.strokes.push(s.pending);s.pending=null;write(s);}}};controls();
