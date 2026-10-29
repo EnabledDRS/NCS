@@ -13,10 +13,12 @@ const Ink=(()=>{
  function changed(s){draw(s);controls();write(s);}
  function distance(p,a,b,ratio){const px=p[0],py=p[1]/ratio,ax=a[0],ay=a[1]/ratio,bx=b[0],by=b[1]/ratio,dx=bx-ax,dy=by-ay,t=Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(px-ax-t*dx,py-ay-t*dy);}
  function eraseAt(s,p){s.strokes=s.strokes.filter(stroke=>!stroke.points.some((a,i)=>distance(p,a,stroke.points[Math.max(0,i-1)],s.ratio)<.018+stroke.width/2));}
+ const penEraser=e=>e.pointerType==='pen'&&((e.buttons&34)!==0||(e.buttons===undefined&&(e.button===2||e.button===5)));
+ const contact=e=>e.pointerType!=='pen'||e.pressure>0||(e.buttons&33)!==0||(e.buttons===undefined&&e.button===0);
  function mount(){
   dispose();surfaces.clear();active=null;const targets=[...app.querySelectorAll('.source-image')].filter(img=>!img.closest('.explanation'));
   if(!targets.length)return;
-  const bar=document.createElement('div');bar.className='ink-tools';bar.setAttribute('aria-label','문제 필기 도구');bar.innerHTML=`<div class="ink-buttons"><button type="button" data-ink="toggle" aria-pressed="true">✎ 필기 켜짐</button><label>색상 <input type="color" value="${color}" aria-label="필기 색상"></label><label>굵기 <select aria-label="필기 굵기"><option value="2">가는 펜</option><option value="3">보통 펜</option><option value="5">굵은 펜</option></select></label><button type="button" data-ink="eraser" aria-pressed="false">지우개</button><button type="button" data-ink="undo" disabled>되돌리기</button><button type="button" data-ink="redo" disabled>다시 실행</button><button type="button" data-ink="clear">이 문제 필기 지우기</button></div><p>문제·지문에 S펜으로 필기 · 손가락으로 스크롤 · 정답은 아래에서 터치<br>필기는 이 기기에 자동 저장됩니다. 지우개는 닿은 획을 지웁니다.</p>`;
+  const bar=document.createElement('div');bar.className='ink-tools';bar.setAttribute('aria-label','문제 필기 도구');bar.innerHTML=`<div class="ink-buttons"><button type="button" data-ink="toggle" aria-pressed="true">✎ 필기 켜짐</button><label>색상 <input type="color" value="${color}" aria-label="필기 색상"></label><label>굵기 <select aria-label="필기 굵기"><option value="2">가는 펜</option><option value="3">보통 펜</option><option value="5">굵은 펜</option></select></label><button type="button" data-ink="eraser" aria-pressed="false">지우개</button><button type="button" data-ink="undo" disabled>되돌리기</button><button type="button" data-ink="redo" disabled>다시 실행</button><button type="button" data-ink="clear">이 문제 필기 지우기</button></div><p>문제·지문에 S펜으로 필기 · S펜 버튼을 누른 채 문지르면 지우기 · 손가락은 스크롤<br>필기는 이 기기에 자동 저장됩니다. 지우개는 닿은 획을 지웁니다. 정답은 아래에서 터치하세요.</p>`;
   const first=app.querySelector('.common')||app.querySelector('.source-hint');first.before(bar);
   bar.querySelector('select').value=String(width);bar.querySelector('select').onchange=e=>width=Number(e.target.value);bar.querySelector('input').oninput=e=>{color=e.target.value;eraser=false;controls();};
   bar.querySelector('[data-ink="toggle"]').onclick=()=>{enabled=!enabled;controls();for(const s of surfaces)draw(s);};
@@ -33,8 +35,16 @@ const Ink=(()=>{
    // Pen hover/over occurs before contact; disable native gestures only for the pen.
    canvas.onpointerover=e=>{if(e.pointerType==='pen'||e.pointerType==='mouse')canvas.style.touchAction='none';else if(s.pointer===null)canvas.style.touchAction='pan-y pinch-zoom';};
    canvas.onpointerleave=()=>{if(s.pointer===null)canvas.style.touchAction='pan-y pinch-zoom';};
-   canvas.onpointerdown=e=>{if(!enabled||!s.loaded||e.pointerType==='touch'||s.pointer!==null||e.button!==0&&e.button!==5)return;e.preventDefault();active=s;s.pointer=e.pointerId;canvas.setPointerCapture(e.pointerId);snapshot(s);s.erasing=eraser||e.button===5;if(s.erasing)eraseAt(s,point(e));else s.pending={color,width:width/800,points:[point(e)]};draw(s);controls();};
-   canvas.onpointermove=e=>{if(e.pointerId!==s.pointer)return;e.preventDefault();const events=e.getCoalescedEvents?.()||[e];for(const ev of events){const p=point(ev);if(s.erasing)eraseAt(s,p);else if(s.pending&&s.pending.points.length<12000)s.pending.points.push(p);}draw(s);};
+   canvas.oncontextmenu=e=>e.preventDefault();
+   canvas.onpointerdown=e=>{if(!enabled||!s.loaded||e.pointerType==='touch'||s.pointer!==null||!contact(e)||(e.pointerType!=='pen'&&e.button!==0))return;e.preventDefault();active=s;s.pointer=e.pointerId;canvas.setPointerCapture(e.pointerId);snapshot(s);s.erasing=eraser||penEraser(e);if(s.erasing)eraseAt(s,point(e));else s.pending={color,width:width/800,points:[point(e)]};draw(s);controls();};
+   canvas.onpointermove=e=>{
+    // A barrel button can start a pointer while hovering. Start ink only on tip contact.
+    if(s.pointer===null&&e.pointerType==='pen'&&contact(e))canvas.onpointerdown(e);
+    if(e.pointerId!==s.pointer)return;if(!contact(e)){end(e);return;}e.preventDefault();
+    const nextErase=eraser||penEraser(e);
+    if(nextErase!==s.erasing){if(s.pending)s.strokes.push(s.pending);s.pending=nextErase?null:{color,width:width/800,points:[point(e)]};s.erasing=nextErase;}
+    const events=e.getCoalescedEvents?.()||[e];for(const ev of events){const p=point(ev);if(s.erasing)eraseAt(s,p);else if(s.pending&&s.pending.points.length<12000)s.pending.points.push(p);}draw(s);
+   };
    function end(e){if(e.pointerId!==s.pointer)return;if(s.pending)s.strokes.push(s.pending);s.pending=null;s.pointer=null;if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);changed(s);}
    canvas.onpointerup=end;canvas.onpointercancel=end;canvas.onlostpointercapture=end;
   }

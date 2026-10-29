@@ -39,3 +39,19 @@ test('undo, redo and stroke eraser work independently of answer selection',async
  bar.querySelector('[data-ink="eraser"]').onclick();c.onpointerdown(f.event('pen',250,100));c.onpointerup(f.event('pen',250,100));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0);
  bar.querySelector('[data-ink="undo"]').onclick();await tick();await tick();assert.equal(f.saved.get('question').strokes.length,1);
 });
+test('S Pen barrel button temporarily erases, including toggles while the tip stays down',async()=>{
+ const f=fixture();await f.mount();const c=f.canvases[0];
+ const pen=(x,y,buttons=1,button=-1,pressure=.5)=>({...f.event('pen',x,y),buttons,button,pressure});
+ c.onpointerdown(pen(100,100,1,0));c.onpointermove(pen(400,100));c.onpointerup(pen(400,100,0,0,0));await tick();await tick();
+ c.onpointerdown(pen(250,100,3,2));c.onpointerup(pen(250,100,0,0,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0,'barrel button erases instead of right-clicking');
+ c.onpointerdown(pen(100,100,1,0));c.onpointermove(pen(400,100));c.onpointermove(pen(250,100,3,2));c.onpointermove(pen(250,200,1,2));c.onpointermove(pen(400,200));c.onpointerup(pen(400,200,0,0,0));await tick();await tick();
+ const strokes=f.saved.get('question').strokes;assert.equal(strokes.length,1);assert.equal(strokes[0].points[0][1],.5,'releasing barrel returns to pen with no joining line');
+});
+test('hovering barrel button does not erase; tip contact and inverted eraser do',async()=>{
+ const f=fixture();await f.mount();const c=f.canvases[0],pen=(x,y,buttons,pressure,button=-1)=>({...f.event('pen',x,y),buttons,pressure,button});
+ c.onpointerdown(pen(100,100,1,.5,0));c.onpointerup(pen(100,100,0,0,0));await tick();await tick();
+ c.onpointerdown(pen(100,100,2,0,2));c.onpointermove(pen(100,100,2,0));await tick();assert.equal(f.saved.get('question').strokes.length,1);
+ c.onpointermove(pen(100,100,3,.5));c.onpointermove(pen(100,100,2,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0);
+ c.onpointerdown(pen(100,100,1,.5,0));c.onpointerup(pen(100,100,0,0,0));await tick();await tick();c.onpointerdown(pen(100,100,32,.5,5));c.onpointerup(pen(100,100,0,0,5));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0);
+ let blocked=false;c.oncontextmenu({preventDefault(){blocked=true;}});assert.equal(blocked,true);
+});
