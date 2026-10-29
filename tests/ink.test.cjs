@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const tick=()=>new Promise(r=>setImmediate(r));
-function fixture(){
+function fixture({whale=false}={}){
  const saved=new Map(),canvases=[],bars=[];
  class Element{
   constructor(tag){this.tag=tag;this.style={};this.children=[];this.disabled=false;this.hidden=false;this.attrs={};this.width=0;this.height=0;this.rect={left:0,top:0,width:800,height:400};}
@@ -21,7 +21,7 @@ function fixture(){
  const app={querySelectorAll(){return images;},querySelector(){return {before(e){bars.push(e);}};}};
  const db={transaction(){const tx={objectStore(){return {get(id){const r={};setImmediate(()=>{r.result=saved.get(id);r.onsuccess();});return r;},put(value){saved.set(value.id,structuredClone(value));setImmediate(()=>tx.oncomplete());}};}};return tx;}};
  const indexedDB={open(){const r={};setImmediate(()=>{r.result=db;r.onsuccess();});return r;}};
- const context={indexedDB,document,app,ResizeObserver:class{observe(){}disconnect(){}},window:{devicePixelRatio:2},notify(){},ask:async()=>true};vm.createContext(context);vm.runInContext(fs.readFileSync('ink.js','utf8')+'\nthis.ink=Ink;',context);
+ const context={indexedDB,document,app,navigator:{userAgent:whale?'Android Whale/3.0':'test'},ResizeObserver:class{observe(){}disconnect(){}},window:{devicePixelRatio:2},notify(){},ask:async()=>true};vm.createContext(context);vm.runInContext(fs.readFileSync('ink.js','utf8')+'\nthis.ink=Ink;',context);
  const event=(type,x,y,id=1)=>({pointerType:type,clientX:x,clientY:y,pointerId:id,button:0,preventDefault(){this.prevented=true;}});
  return {context,images,saved,canvases,bars,event,async mount(){context.ink.mount();await tick();await tick();await tick();}};
 }
@@ -54,4 +54,19 @@ test('hovering barrel button does not erase; tip contact and inverted eraser do'
  c.onpointermove(pen(100,100,3,.5));c.onpointermove(pen(100,100,2,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0);
  c.onpointerdown(pen(100,100,1,.5,0));c.onpointerup(pen(100,100,0,0,0));await tick();await tick();c.onpointerdown(pen(100,100,32,.5,5));c.onpointerup(pen(100,100,0,0,5));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0);
  let blocked=false;c.oncontextmenu({preventDefault(){blocked=true;}});assert.equal(blocked,true);
+});
+test('Whale hover button with buttons=1 arms eraser, pressure gates contact, release restores pen',async()=>{
+ const f=fixture({whale:true});await f.mount();const c=f.canvases[0];
+ const pen=(type,x,y,buttons,pressure,button=-1)=>({...f.event('pen',x,y),type,buttons,pressure,button});
+ c.onpointerover(pen('pointerover',100,100,0,0));
+ c.onpointerdown(pen('pointerdown',100,100,1,.4,0));c.onpointermove(pen('pointermove',400,100,1,.7));c.onpointerup(pen('pointerup',400,100,0,0,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,1,'ordinary pressure draws');
+ c.onpointerdown(pen('pointerdown',250,100,1,0,0));c.onpointermove(pen('pointermove',250,100,1,0));await tick();assert.equal(f.saved.get('question').strokes.length,1,'hover button never writes or erases');
+ c.onpointermove(pen('pointermove',250,100,1,.3));c.onpointermove(pen('pointermove',250,100,1,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,0,'same buttons=1 plus real pressure erases');
+ c.onpointerup(pen('pointerup',250,100,0,0,0));
+ c.onpointerdown(pen('pointerdown',100,200,1,.4,0));c.onpointermove(pen('pointermove',400,200,1,.6));c.onpointerup(pen('pointerup',400,200,0,0,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,1,'release clears hover latch');assert.equal(f.saved.get('question').strokes[0].points[0][1],.5);
+});
+test('Whale hover button released without contact leaves saved notes unchanged',async()=>{
+ const f=fixture({whale:true});await f.mount();const c=f.canvases[0];const pen=(type,buttons,pressure,button=0)=>({...f.event('pen',100,100),type,buttons,pressure,button});
+ c.onpointerdown(pen('pointerdown',1,0));c.onpointerup(pen('pointerup',0,0));await tick();assert.equal(f.saved.size,0);
+ c.onpointerdown(pen('pointerdown',1,.5));c.onpointerup(pen('pointerup',0,0));await tick();await tick();assert.equal(f.saved.get('question').strokes.length,1);
 });
